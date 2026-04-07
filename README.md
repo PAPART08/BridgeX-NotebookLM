@@ -1,0 +1,2 @@
+# BridgeX-NotebookLM
+myextension
