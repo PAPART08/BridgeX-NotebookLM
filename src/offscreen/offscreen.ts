@@ -15,7 +15,16 @@ worker.postMessage({
 
 // Relay messages between the extension (background) and the worker
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.target !== 'offscreen') return;
+  // 1. Explicit PING handler for readiness checks
+  if (message.type === 'OFFSCREEN_PING') {
+    sendResponse({ success: true, pong: true });
+    return false; // synchronous response
+  }
+
+  // 2. Target check - only handle 'offscreen' messages
+  if (message.target !== 'offscreen') {
+    return false; // Don't return 'true' or 'undefined' early to avoid port closure bugs
+  }
 
   // Use a unique ID for each request to match responses
   const requestId = Math.random().toString(36).substring(7);

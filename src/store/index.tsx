@@ -6,7 +6,6 @@ import {
   isContextInvalidatedError, 
   setupGlobalErrorFilter 
 } from '../utils/context';
-import { listNotebooks } from '../utils/notebooklm-api';
 
 // Silence harmless context invalidation errors globally
 setupGlobalErrorFilter();
@@ -25,12 +24,14 @@ interface StorageContextType {
   deleteFolder: (id: string) => void;
   bridgeNote: (note: ISource, notebookId: string) => void;
   assignSourceToFolder: (title: string, folderId: string) => void;
-  addSourceGroup: (name: string, sourceNames: string[], notebookId?: string) => void;
+  addSourceGroup: (name: string, sourceNames: string[], notebookId?: string, sourceIds?: string[]) => void;
   addToSourceGroup: (groupId: string, sourceName: string) => void;
   bulkAddSourcesToGroup: (groupId: string, sourceNames: string[]) => void;
   removeFromSourceGroup: (groupId: string, sourceName: string) => void;
   moveSourceBetweenGroups: (sourceName: string, fromGroupId: string, toGroupId: string) => void;
   deleteSourceGroup: (id: string) => void;
+  clearAllSourceGroups: () => Promise<void>;
+  updateSourceGroup: (id: string, updates: Partial<ISourceGroup>) => Promise<void>;
   reorderSourceGroups: (notebookId: string, newOrderedGroups: ISourceGroup[]) => Promise<void>;
   migrateLegacyGroups: (notebookId: string) => void;
   bulkAssignSourcesToFolder: (titles: string[], folderId: string) => void;
@@ -401,11 +402,12 @@ export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ child
     });
   }, [refreshData]);
 
-  const addSourceGroup = React.useCallback(async (name: string, sourceNames: string[], notebookId?: string) => {
+  const addSourceGroup = React.useCallback(async (name: string, sourceNames: string[], notebookId?: string, sourceIds?: string[]) => {
     const newG = { 
       id: Math.random().toString(36).substring(2, 9), 
       name, 
       sourceNames, 
+      sourceIds,
       createdAt: Date.now(), 
       notebookId,
       sortOrder: (stateRef.current.sourceGroups?.filter(g => g.notebookId === notebookId).length || 0)
@@ -444,9 +446,24 @@ export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ child
     refreshData();
   }, [refreshData]);
 
+  const updateSourceGroup = React.useCallback(async (id: string, updates: Partial<ISourceGroup>) => {
+    await dbRequest('UPDATE_SOURCE_GROUP', { id, ...updates });
+    await refreshData();
+  }, [refreshData]);
+
   const deleteSourceGroup = React.useCallback(async (id: string) => {
     await dbRequest('DELETE_SOURCE_GROUP', { id });
     refreshData();
+  }, [refreshData]);
+
+  const clearAllSourceGroups = React.useCallback(async () => {
+    const groups = stateRef.current.sourceGroups || [];
+    console.log(`[bridgeX] Clearing all ${groups.length} source groups...`);
+    for (const g of groups) {
+      await dbRequest('DELETE_SOURCE_GROUP', { id: g.id });
+    }
+    await refreshData();
+    console.log(`[bridgeX] All source groups cleared.`);
   }, [refreshData]);
 
   const migrateLegacyGroups = React.useCallback(async (notebookId: string) => {
@@ -465,15 +482,98 @@ export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const syncWithNotebookLM = React.useCallback(async () => {
     if (isSyncingState || !isContextValid()) return;
     setIsSyncingState(true);
-    console.log('[bridgeX] Starting account-level NotebookLM sync (direct)...');
+    console.log('[bridgeX] Starting account-level NotebookLM sync (via page context)...');
+
+    // Helper: request notebook list from page context hook with a given timeout
+    const requestNotebookList = (timeoutMs: number): Promise<{ id: string, name: string, sourceCount?: number, emoji?: string }[]> => {
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          window.removeEventListener('message', handler);
+          reject(new Error(`Notebook list request timed out (${timeoutMs / 1000}s)`));
+        }, timeoutMs);
+
+        function handler(event: MessageEvent) {
+          if (event.source !== window) return;
+          if (event.data?.type === 'BRIDGEX_NOTEBOOK_LIST') {
+            clearTimeout(timeout);
+            window.removeEventListener('message', handler);
+            if (event.data.error) {
+              reject(new Error(event.data.error));
+            } else {
+              resolve(event.data.notebooks || []);
+            }
+          }
+        }
+
+        window.addEventListener('message', handler);
+        window.postMessage({ type: 'BRIDGEX_REQUEST_NOTEBOOK_LIST' }, '*');
+      });
+    };
+
+    // Helper: verify the page context hook is alive
+    const verifyHookAlive = (): Promise<boolean> => {
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          window.removeEventListener('message', handler);
+          resolve(false);
+        }, 2000);
+
+        function handler(event: MessageEvent) {
+          if (event.source !== window) return;
+          if (event.data?.type === 'BRIDGEX_WIZ_TOKENS') {
+            clearTimeout(timeout);
+            window.removeEventListener('message', handler);
+            resolve(true);
+          }
+        }
+
+        window.addEventListener('message', handler);
+        window.postMessage({ type: 'BRIDGEX_REQUEST_TOKENS', requestId: 'hook_check_' + Date.now() }, '*');
+      });
+    };
+
+    // Helper: re-inject the network hook via background
+    const reinjectHook = async (): Promise<void> => {
+      try {
+        await chrome.runtime.sendMessage({ type: 'REINJECT_NETWORK_HOOK' });
+        // Give the hook time to initialize
+        await new Promise(r => setTimeout(r, 1000));
+      } catch (e) {
+        console.warn('[bridgeX] Re-inject request failed:', e);
+      }
+    };
 
     try {
-      const urlParams = new URLSearchParams(window.location.search);
-      const authuser = urlParams.get("authuser") || "0";
+      let remoteNotebooks: { id: string, name: string, sourceCount?: number, emoji?: string }[] = [];
+      let lastError: Error | null = null;
+      
+      // Try up to 3 times with increasing timeouts
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          // On retry, check if hook is alive and re-inject if needed
+          if (attempt > 0) {
+            console.log(`[bridgeX] Sync retry ${attempt}/2: Checking hook availability...`);
+            const hookAlive = await verifyHookAlive();
+            if (!hookAlive) {
+              console.warn('[bridgeX] Page context hook is not responding. Re-injecting...');
+              await reinjectHook();
+            }
+          }
 
-      // Call listNotebooks DIRECTLY from the content script context
-      // This works because we have access to window, cookies, and the page context tokens
-      const remoteNotebooks = await listNotebooks("/", authuser);
+          const timeoutMs = 8000 + (attempt * 4000); // 8s, 12s, 16s
+          remoteNotebooks = await requestNotebookList(timeoutMs);
+          lastError = null;
+          break; // Success!
+        } catch (err: any) {
+          lastError = err;
+          console.warn(`[bridgeX] Sync attempt ${attempt + 1} failed:`, err.message);
+        }
+      }
+
+      if (lastError) {
+        throw lastError;
+      }
+
       console.log(`[bridgeX] Discovered ${remoteNotebooks.length} notebooks from account.`);
 
       // Reconcile with local SQLite notebooks
@@ -570,7 +670,7 @@ export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const value = React.useMemo(() => ({ 
     folders, tags, inbox, sourceGroups, notebooks, sourceMappings, notebookMappings,
     addFolder, addNotebook, deleteNotebook, addTag, deleteFolder, bridgeNote, assignSourceToFolder, 
-    addSourceGroup, addToSourceGroup, bulkAddSourcesToGroup, removeFromSourceGroup, moveSourceBetweenGroups, deleteSourceGroup,
+    addSourceGroup, addToSourceGroup, bulkAddSourcesToGroup, removeFromSourceGroup, moveSourceBetweenGroups, deleteSourceGroup, clearAllSourceGroups, updateSourceGroup,
     reorderSourceGroups,
     migrateLegacyGroups,
     assignNotebookToFolder,
@@ -592,7 +692,7 @@ export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }), [
     folders, tags, inbox, sourceGroups, notebooks, sourceMappings, notebookMappings,
     addFolder, addNotebook, deleteNotebook, addTag, deleteFolder, bridgeNote, assignSourceToFolder, 
-    addSourceGroup, addToSourceGroup, bulkAddSourcesToGroup, removeFromSourceGroup, moveSourceBetweenGroups, deleteSourceGroup,
+    addSourceGroup, addToSourceGroup, bulkAddSourcesToGroup, removeFromSourceGroup, moveSourceBetweenGroups, deleteSourceGroup, clearAllSourceGroups, updateSourceGroup,
     reorderSourceGroups,
     migrateLegacyGroups,
     assignNotebookToFolder,

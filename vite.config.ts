@@ -25,13 +25,12 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     hmr: {
-      protocol: 'ws',
       host: 'localhost',
       port: 5173,
     },
-    cors: true,
   },
   build: {
+    modulePreload: false,
     rollupOptions: {
       input: {
         popup: resolve(__dirname, 'src/popup/index.html'),

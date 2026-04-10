@@ -43,6 +43,7 @@ export interface ISourceGroup {
   id: string;
   name: string;
   sourceNames: string[]; // names of native NotebookLM sources
+  sourceIds?: string[];  // Stable IDs from source-item-more-button-
   createdAt: number;
   notebookId?: string; // ID of the local INotebook
   sortOrder?: number;

@@ -144,34 +144,46 @@ const ensureInfrastructure = () => {
   }
 };
 
-// ─── Injection ──────────────────────────────────────────────────────────
-
-const injectNetworkHook = () => {
-    if (!isContextValid()) return;
-    if (document.getElementById('bridgex-network-hook')) return;
-    
-    try {
-        const script = document.createElement('script');
-        script.id = 'bridgex-network-hook';
-        script.src = chrome.runtime.getURL('notebooklmNetworkHookPage.js');
-        (document.head || document.documentElement).appendChild(script);
-        console.log('[bridgeX] Network hook injected.');
-    } catch (e) {
-        console.error('[bridgeX] Failed to inject network hook:', e);
-    }
-};
+// ─── Network Hook ────────────────────────────────────────────────────────
+// Network hook is now registered as a main-world content script in manifest.json
+// No DOM script injection needed — bypasses page CSP entirely.
 
 window.addEventListener('message', (event) => {
     if (event.source !== window) return;
     if (event.data?.type === 'NOTEBOOKLM_RPC_DETECTED') {
         const { rpcId } = event.data;
         console.log(`[bridgeX] RPC Detected in page context: ${rpcId}`);
-        
-        // Signal background to refresh or refresh local state if needed
-        if (rpcId === 'wXbhsf' || rpcId === 'VUsiyb') {
-            // For notebook changes, we can trigger a list refresh
-            chrome.runtime.sendMessage({ type: 'GET_NOTEBOOK_LIST' });
+        // No action needed here — syncWithNotebookLM handles notebook sync
+        // directly through the page context postMessage bridge.
+    }
+});
+
+// ─── Background Relay Handler ────────────────────────────────────────────────
+// The background service worker can't call NotebookLM APIs directly (no cookies).
+// It relays requests here, and we forward them through the page context hook.
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === 'RELAY_NOTEBOOK_LIST_REQUEST') {
+        const timeout = setTimeout(() => {
+            window.removeEventListener('message', handler);
+            sendResponse({ success: false, error: 'Notebook list relay timed out (8s)' });
+        }, 8000);
+
+        function handler(event: MessageEvent) {
+            if (event.source !== window) return;
+            if (event.data?.type === 'BRIDGEX_NOTEBOOK_LIST') {
+                clearTimeout(timeout);
+                window.removeEventListener('message', handler);
+                if (event.data.error) {
+                    sendResponse({ success: false, error: event.data.error });
+                } else {
+                    sendResponse({ success: true, notebooks: event.data.notebooks || [] });
+                }
+            }
         }
+
+        window.addEventListener('message', handler);
+        window.postMessage({ type: 'BRIDGEX_REQUEST_NOTEBOOK_LIST' }, '*');
+        return true; // Keep channel open for async response
     }
 });
 
@@ -189,7 +201,7 @@ function init() {
   console.log('[bridgeX] Initializing UI...');
   try {
     injectGlobalStyles();
-    injectNetworkHook();
+
     
     const root = document.createElement('div');
     root.id = ID;
@@ -250,7 +262,7 @@ if (typeof window !== 'undefined') {
   if (isContextValid()) {
     applyTheme();
     window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', applyTheme);
-    injectNetworkHook();
+
     
     // Initial injection
     if (document.readyState === 'complete') {

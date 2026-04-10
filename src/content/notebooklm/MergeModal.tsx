@@ -253,7 +253,7 @@ const MergeModal: React.FC<MergeModalProps> = ({ isOpen, onClose }) => {
             <div style={{ background: 'rgba(209, 161, 123, 0.1)', padding: '8px', borderRadius: '10px' }}>
               <GitMerge size={20} color="var(--color-primary)" />
             </div>
-            <h2 style={{ fontSize: '18px', margin: 0, color: 'var(--bridgex-text-primary)', fontWeight: 600, fontFamily: "'Outfit', sans-serif" }}>Merge & Sync Sources</h2>
+            <h2 style={{ fontSize: '18px', margin: 0, color: 'var(--bridgex-text-primary)', fontWeight: 600, fontFamily: "'Outfit', sans-serif" }}>Combine & Sync Sources</h2>
           </div>
           <button 
             disabled={isProcessing}
@@ -555,7 +555,7 @@ const MergeModal: React.FC<MergeModalProps> = ({ isOpen, onClose }) => {
                 ) : (
                   <>
                     <Play size={16} fill="currentColor" />
-                    Complete Merge
+                    Complete Combine
                   </>
                 )}
               </button>

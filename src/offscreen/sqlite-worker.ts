@@ -176,8 +176,8 @@ async function restoreFromSnapshot(): Promise<void> {
     if (data.sourceGroups?.length) {
       for (const g of data.sourceGroups) {
         try {
-          await exec('INSERT OR IGNORE INTO source_groups (id, name, notebookId, createdAt, sortOrder) VALUES (?, ?, ?, ?, ?)',
-            [g.id, g.name, g.notebookId, g.createdAt, g.sortOrder || 0]);
+          await exec('INSERT OR IGNORE INTO source_groups (id, name, notebookId, createdAt, sortOrder, sourceIds) VALUES (?, ?, ?, ?, ?, ?)',
+            [g.id, g.name, g.notebookId, g.createdAt, g.sortOrder || 0, g.sourceIds || null]);
         } catch { /* skip duplicates */ }
       }
     }
@@ -227,58 +227,72 @@ const initDb = async (wasmUrl: string) => {
     db = await sqlite3.open_v2('bridgex.db');
     
     console.log('[bridgeX] Step 4: Creating schema...');
-    exec(`
-      CREATE TABLE IF NOT EXISTS folders (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        createdAt INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS notebooks (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        notebookLMId TEXT,
-        folderId TEXT,
-        createdAt INTEGER NOT NULL,
-        FOREIGN KEY(folderId) REFERENCES folders(id) ON DELETE CASCADE
-      );
-      CREATE TABLE IF NOT EXISTS tags (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        color TEXT NOT NULL,
-        createdAt INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS notes (
-        id TEXT PRIMARY KEY,
-        notebookId TEXT,
-        title TEXT NOT NULL,
-        content TEXT,
-        url TEXT,
-        type TEXT,
-        timestamp INTEGER NOT NULL,
-        FOREIGN KEY(notebookId) REFERENCES notebooks(id) ON DELETE CASCADE
-      );
-      CREATE TABLE IF NOT EXISTS source_groups (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        notebookId TEXT,
-        createdAt INTEGER NOT NULL,
-        sortOrder INTEGER DEFAULT 0,
-        FOREIGN KEY(notebookId) REFERENCES notebooks(id) ON DELETE CASCADE
-      );
-      CREATE TABLE IF NOT EXISTS source_group_items (
-        groupId TEXT,
-        sourceName TEXT,
-        PRIMARY KEY (groupId, sourceName),
-        FOREIGN KEY(groupId) REFERENCES source_groups(id) ON DELETE CASCADE
-      );
-      CREATE TABLE IF NOT EXISTS prompts (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        content TEXT NOT NULL,
-        category TEXT,
-        createdAt INTEGER NOT NULL
-      );
-    `);
+    
+    await exec(`CREATE TABLE IF NOT EXISTS folders (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      createdAt INTEGER NOT NULL
+    );`);
+
+    await exec(`CREATE TABLE IF NOT EXISTS notebooks (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      notebookLMId TEXT,
+      folderId TEXT,
+      createdAt INTEGER NOT NULL,
+      FOREIGN KEY(folderId) REFERENCES folders(id) ON DELETE CASCADE
+    );`);
+
+    await exec(`CREATE TABLE IF NOT EXISTS tags (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      color TEXT NOT NULL,
+      createdAt INTEGER NOT NULL
+    );`);
+
+    await exec(`CREATE TABLE IF NOT EXISTS notes (
+      id TEXT PRIMARY KEY,
+      notebookId TEXT,
+      title TEXT NOT NULL,
+      content TEXT,
+      url TEXT,
+      type TEXT,
+      timestamp INTEGER NOT NULL,
+      FOREIGN KEY(notebookId) REFERENCES notebooks(id) ON DELETE CASCADE
+    );`);
+
+    await exec(`CREATE TABLE IF NOT EXISTS source_groups (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      notebookId TEXT,
+      createdAt INTEGER NOT NULL,
+      sortOrder INTEGER DEFAULT 0,
+      sourceIds TEXT,
+      FOREIGN KEY(notebookId) REFERENCES notebooks(id) ON DELETE CASCADE
+    );`);
+
+    await exec(`CREATE TABLE IF NOT EXISTS source_group_items (
+      groupId TEXT,
+      sourceName TEXT,
+      PRIMARY KEY (groupId, sourceName),
+      FOREIGN KEY(groupId) REFERENCES source_groups(id) ON DELETE CASCADE
+    );`);
+
+    await exec(`CREATE TABLE IF NOT EXISTS prompts (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      category TEXT,
+      createdAt INTEGER NOT NULL
+    );`);
+
+    // Schema migration: add sourceIds column if missing (for existing databases)
+    try {
+      await exec('ALTER TABLE source_groups ADD COLUMN sourceIds TEXT');
+      console.log('[bridgeX] Migrated: added sourceIds column to source_groups');
+    } catch {
+      // Column already exists — this is fine
+    }
 
     // Restore any previously persisted data
     console.log('[bridgeX] Step 5: Restoring persisted data...');
@@ -429,6 +443,7 @@ self.onmessage = async (event) => {
         // Denormalize into the expected ISourceGroup[] format
         result = groups.map(g => ({
           ...g,
+          sourceIds: g.sourceIds ? JSON.parse(g.sourceIds) : undefined,
           sourceNames: items
             .filter(i => i.groupId === g.id)
             .map(i => i.sourceName)
@@ -436,9 +451,9 @@ self.onmessage = async (event) => {
         break;
       }
       case 'ADD_SOURCE_GROUP': {
-        const { id, name, sourceNames, createdAt, notebookId, sortOrder } = payload;
-        await exec('INSERT OR IGNORE INTO source_groups (id, name, notebookId, createdAt, sortOrder) VALUES (?, ?, ?, ?, ?)', 
-          [id, name, notebookId, createdAt, sortOrder || 0]);
+        const { id, name, sourceNames, createdAt, notebookId, sortOrder, sourceIds } = payload;
+        await exec('INSERT OR IGNORE INTO source_groups (id, name, notebookId, createdAt, sortOrder, sourceIds) VALUES (?, ?, ?, ?, ?, ?)', 
+          [id, name, notebookId, createdAt, sortOrder || 0, sourceIds ? JSON.stringify(sourceIds) : null]);
         for (const sn of (sourceNames || [])) {
           await exec('INSERT OR IGNORE INTO source_group_items (groupId, sourceName) VALUES (?, ?)', 
             [id, sn]);
@@ -457,8 +472,31 @@ self.onmessage = async (event) => {
         break;
       }
       case 'UPDATE_SOURCE_GROUP': {
-        // Handle migration/scoping update
-        await exec('UPDATE source_groups SET notebookId = ? WHERE id = ?', [payload.notebookId, payload.id]);
+        // Dynamic update: only set fields that are explicitly provided
+        const setClauses: string[] = [];
+        const setValues: any[] = [];
+
+        if (payload.notebookId !== undefined) {
+          setClauses.push('notebookId = ?');
+          setValues.push(payload.notebookId);
+        }
+        if (payload.name !== undefined) {
+          setClauses.push('name = ?');
+          setValues.push(payload.name);
+        }
+        if (payload.sortOrder !== undefined) {
+          setClauses.push('sortOrder = ?');
+          setValues.push(payload.sortOrder);
+        }
+        if (payload.sourceIds !== undefined) {
+          setClauses.push('sourceIds = ?');
+          setValues.push(JSON.stringify(payload.sourceIds));
+        }
+
+        if (setClauses.length > 0) {
+          setValues.push(payload.id);
+          await exec(`UPDATE source_groups SET ${setClauses.join(', ')} WHERE id = ?`, setValues);
+        }
         result = { success: true };
         needsPersist = true;
         break;

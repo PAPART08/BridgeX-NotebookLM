@@ -215,7 +215,7 @@ const BulkDeleteModal: React.FC<BulkDeleteModalProps> = ({ isOpen, onClose }) =>
             <div style={{ background: 'rgba(239, 68, 68, 0.1)', padding: '8px', borderRadius: '10px' }}>
               <Trash2 size={20} color="#EF4444" />
             </div>
-            <h2 style={{ fontSize: '18px', margin: 0, color: 'var(--bridgex-text-primary)', fontWeight: 600, fontFamily: "'Outfit', sans-serif" }}>Bulk Delete Sources</h2>
+            <h2 style={{ fontSize: '18px', margin: 0, color: 'var(--bridgex-text-primary)', fontWeight: 600, fontFamily: "'Outfit', sans-serif" }}>Batch Clear Sources</h2>
           </div>
           <button 
             disabled={isDeleting}

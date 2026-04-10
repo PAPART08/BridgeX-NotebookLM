@@ -33,7 +33,7 @@ const SourcesHeaderButtons: React.FC<{
         onMouseOut={e => { e.currentTarget.style.backgroundColor = 'var(--bridgex-surface)'; e.currentTarget.style.borderColor = 'var(--bridgex-border)'; }}
       >
         <Upload size={14} color="var(--color-primary)" />
-        Smart Import
+        Power Import
       </button>
       <button 
         onClick={(e) => { e.stopPropagation(); onMerge(); }}
@@ -48,7 +48,7 @@ const SourcesHeaderButtons: React.FC<{
         onMouseOut={e => { e.currentTarget.style.backgroundColor = 'var(--bridgex-surface)'; e.currentTarget.style.borderColor = 'var(--bridgex-border)'; }}
       >
         <GitMerge size={14} color="var(--color-primary)" />
-        Merge
+        Combine
       </button>
       <button 
         onClick={(e) => { e.stopPropagation(); onBulkAssign(); }}
@@ -63,7 +63,7 @@ const SourcesHeaderButtons: React.FC<{
         onMouseOut={e => { e.currentTarget.style.backgroundColor = 'var(--bridgex-surface)'; e.currentTarget.style.borderColor = 'var(--bridgex-border)'; }}
       >
         <FolderPlus size={14} color="var(--color-primary)" />
-        Bulk Assign
+        Group Sources
       </button>
       <button 
         onClick={(e) => { e.stopPropagation(); onBulkDelete(); }}
@@ -78,7 +78,7 @@ const SourcesHeaderButtons: React.FC<{
         onMouseOut={e => { e.currentTarget.style.backgroundColor = 'var(--bridgex-surface)'; e.currentTarget.style.borderColor = 'var(--bridgex-border)'; }}
       >
         <Trash2 size={14} color="#EF4444" />
-        Bulk Delete
+        Batch Clear
       </button>
     </div>
   );
@@ -114,7 +114,7 @@ const DashboardHeaderButtons: React.FC<{
         onMouseOut={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
       >
         <FolderPlus size={16} color="var(--color-primary, #D1A17B)" />
-        Bulk Assign
+        Organize Folders
       </button>
       <button 
         onClick={(e) => { e.stopPropagation(); onOpenCreateFolder(); }}

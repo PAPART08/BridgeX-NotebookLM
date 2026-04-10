@@ -4,6 +4,7 @@ import { uploadFileToNotebook } from '../../utils/notebooklm-api';
 import { extractEpubMetadata, EpubChapter } from '../../utils/fileExtractor';
 import { splitEpub, SplitEpubResult } from '../../utils/epubSplitter';
 import EpubSplitOptions from './EpubSplitOptions';
+import JSZip from 'jszip';
 
 interface SmartImportModalProps {
   isOpen: boolean;
@@ -82,7 +83,6 @@ const SmartImportModal: React.FC<SmartImportModalProps> = ({ isOpen, onClose }) 
         setEpubChapters(chapters);
 
         // Count words from the full document by reading raw XHTML from the ZIP
-        const JSZip = (await import('jszip')).default;
         const zip = new JSZip();
         const zipData = await zip.loadAsync(file);
         let totalWords = 0;

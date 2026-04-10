@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { Folder, Plus, ChevronRight, ChevronDown, X, CheckSquare, Settings, Sparkles, Layers, RefreshCw, ExternalLink, Inbox, LayoutGrid, FileText } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Folder, Plus, ChevronRight, ChevronDown, X, CheckSquare, Settings, Sparkles, Layers, RefreshCw, ExternalLink, Inbox, LayoutGrid, FileText, Target, AlertTriangle, Check } from 'lucide-react';
 import { useStorage } from '../../store';
 import { PromptLibrary } from '../../components/PromptLibrary';
+import { deepQuerySelectorAll, cleanSourceName, getActiveSourceInfo, getAllDomSourceInfo, focusGroupSources, unfocusAllSources, verifySourceState, isSourceGroupMember, fetchSourceListViaHook } from '../../utils/dom';
 
 interface SidebarProps {
   onOpenSmartImport: () => void;
@@ -12,18 +13,20 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ onOpenSmartImport, onOpenMerge, onOpenCreateFolder, onOpenBulkAssignNotebooks }) => {
   const { 
-    folders, notebooks, inbox, sourceGroups, addFolder, deleteFolder, addNotebook, deleteNotebook, addSourceGroup, deleteSourceGroup, bridgeNote,
+    folders, notebooks, inbox, sourceGroups, addFolder, deleteFolder, addNotebook, deleteNotebook, addSourceGroup, deleteSourceGroup, clearAllSourceGroups, bridgeNote,
     selectedSourceGroupIds, setSelectedSourceGroupIds,
     removeFromSourceGroup, moveSourceBetweenGroups,
     sourceSearchQuery, migrateLegacyGroups, repairData,
     clearNotebookSelection, selectedNotebookIds,
-    syncWithNotebookLM, isSyncing, reorderSourceGroups
+    syncWithNotebookLM, isSyncing, reorderSourceGroups, updateSourceGroup
   } = useStorage();
 
   const [isExpanded, setIsExpanded] = useState(true);
   const [location, setLocation] = useState(window.location.href);
   const [isRepairing, setIsRepairing] = useState(false);
   const [draggedGroupId, setDraggedGroupId] = useState<string | null>(null);
+  const [focusedGroupId, setFocusedGroupId] = useState<string | null>(null);
+  const [isFocusing, setIsFocusing] = useState(false);
 
   // Tree expand/collapse state
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
@@ -34,16 +37,206 @@ const Sidebar: React.FC<SidebarProps> = ({ onOpenSmartImport, onOpenMerge, onOpe
   const [showInbox, setShowInbox] = useState(false);
   const [showPrompts, setShowPrompts] = useState(false);
 
-  const handleRepair = async () => {
-    setIsRepairing(true);
+  // Active DOM sources — tracked via polling
+  const [activeDomSources, setActiveDomSources] = useState<{names: string[], ids: string[]}>({names: [], ids: []});
+  // Verification state per group: { [groupId]: { checkedCount, expectedCount } }
+  const [groupVerification, setGroupVerification] = useState<{[id: string]: {checkedCount: number, expectedCount: number}}>({});
+  
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const active = getActiveSourceInfo();
+      setActiveDomSources(prev => {
+        if (prev.ids.length === active.ids.length && prev.ids.every(id => active.ids.includes(id)) &&
+            prev.names.length === active.names.length && prev.names.every(n => active.names.includes(n))) {
+            return prev;
+        }
+        return active;
+      });
+
+      // Update verification for the focused group
+      if (focusedGroupId) {
+        const focusedGroup = sourceGroups.find(g => g.id === focusedGroupId);
+        if (focusedGroup) {
+          const v = verifySourceState(focusedGroup);
+          setGroupVerification(prev => {
+            const existing = prev[focusedGroupId];
+            if (existing && existing.checkedCount === v.checkedCount && existing.expectedCount === v.expectedCount) return prev;
+            return { ...prev, [focusedGroupId]: { checkedCount: v.checkedCount, expectedCount: v.expectedCount } };
+          });
+        }
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [focusedGroupId, sourceGroups]);  // ─── Single-Pass Focus Handler ──────────────────────────────────────────
+  const handleFocusGroup = React.useCallback(async (group: typeof sourceGroups[0], wantToSelect: boolean) => {
+    if (isFocusing) return;
+    setIsFocusing(true);
+    
+    setSelectedSourceGroupIds(wantToSelect ? [group.id] : []);
+    setFocusedGroupId(wantToSelect ? group.id : null);
+    
+    await new Promise(r => setTimeout(r, 50));
+
     try {
-      await repairData();
-      alert('Data repair and sync complete!');
+      if (wantToSelect) {
+        // ── STEP 0: Notebook mismatch guard ──
+        const currentNotebookId = window.location.href.split('/notebook/')[1]?.split('?')[0]?.split('/')[0] || '';
+        if (group.notebookId && currentNotebookId && group.notebookId !== currentNotebookId) {
+          console.log(`[bridgeX] Group "${group.name}" belongs to a different notebook. Skipping focus.`);
+          alert(`This source group belongs to a different notebook.\nPlease navigate to that notebook first.`);
+          setSelectedSourceGroupIds([]);
+          setFocusedGroupId(null);
+          setIsFocusing(false);
+          return;
+        }
+
+        // ── STEP 1: Get ALL source items currently visible in the DOM ──
+        // These DOM IDs are the ground truth for checkbox toggling.
+        const allDomSources = getAllDomSourceInfo();
+        console.log(`[bridgeX] 🎯 Focus "${group.name}": Found ${allDomSources.length} DOM source items.`);
+        
+        // ── STEP 2: Get API sources for full-name resolution ──
+        let apiSources: { id: string, title: string }[] = [];
+        try {
+          apiSources = await fetchSourceListViaHook(currentNotebookId);
+          console.log(`[bridgeX] 📋 rLM1Ne returned ${apiSources.length} sources.`);
+        } catch (err) {
+          console.warn(`[bridgeX] ⚠️ rLM1Ne failed, falling back to DOM-only matching:`, err);
+        }
+
+        // ── STEP 3: Build a unified lookup ──
+        // Map: DOM ID → { domName, apiTitle }
+        const sourceLookup = new Map<string, { domId: string, domName: string, apiTitle: string }>();
+        for (const dom of allDomSources) {
+          const apiMatch = apiSources.find(api => api.id === dom.id);
+          sourceLookup.set(dom.id, {
+            domId: dom.id,
+            domName: dom.name,
+            apiTitle: apiMatch?.title || dom.name  // fallback to DOM name if API doesn't match
+          });
+        }
+
+        // If API IDs don't match DOM IDs, try matching by name
+        if (apiSources.length > 0 && allDomSources.length > 0) {
+          const domIdsInApi = allDomSources.filter(d => apiSources.some(a => a.id === d.id)).length;
+          if (domIdsInApi === 0) {
+            console.warn(`[bridgeX] ⚠️ DOM IDs don't match API IDs! Attempting name-based bridge...`);
+            console.warn(`[bridgeX]   DOM IDs sample: ${allDomSources.slice(0, 2).map(d => d.id).join(', ')}`);
+            console.warn(`[bridgeX]   API IDs sample: ${apiSources.slice(0, 2).map(a => a.id).join(', ')}`);
+            // Build name-based bridge: match DOM names to API titles to get API→DOM mapping
+            for (const dom of allDomSources) {
+              for (const api of apiSources) {
+                const domNorm = dom.name.toLowerCase().trim();
+                const apiNorm = api.title.replace(/\.(pdf|epub|txt|docx|md|html|csv|json|xml)$/i, '').toLowerCase().trim();
+                // Require a tighter match for the DOM->API bridge (min 20 chars or exact)
+                if (domNorm === apiNorm || (domNorm.length > 20 && (apiNorm.startsWith(domNorm) || domNorm.startsWith(apiNorm)))) {
+                  sourceLookup.set(dom.id, { domId: dom.id, domName: dom.name, apiTitle: api.title });
+                  break;
+                }
+              }
+            }
+          }
+        }
+
+        // ── STEP 4: Resolve which DOM IDs belong to this group ──
+        const targetDomIds = new Set<string>();
+        const resolvedNames: string[] = [];
+        const resolvedIds: string[] = [];
+        
+        const hasStoredIds = group.sourceIds && group.sourceIds.length > 0;
+        console.log(`[bridgeX] 📊 Group data: ${hasStoredIds ? group.sourceIds!.length + ' stored IDs' : 'NO stored IDs'}, ${group.sourceNames?.length || 0} stored names`);
+
+
+        for (const [domId, info] of sourceLookup) {
+          const isMatch = isSourceGroupMember(
+            domId, 
+            info.domName, 
+            group.sourceIds, 
+            group.sourceNames, 
+            info.apiTitle
+          );
+          
+          if (isMatch) {
+            targetDomIds.add(domId);
+            resolvedNames.push(info.apiTitle);
+            resolvedIds.push(domId);
+          }
+        }
+
+        console.log(`[bridgeX] 🎯 Resolved ${targetDomIds.size} target DOM IDs for group "${group.name}".`);
+
+        if (targetDomIds.size === 0) {
+          // Dump full diagnostics for debugging — use JSON.stringify to avoid [object Object]
+          console.error(`[bridgeX] ❌ ZERO MATCHES! Full diagnostic data:`);
+          console.error(`[bridgeX] Stored names: ${JSON.stringify(group.sourceNames)}`);
+          console.error(`[bridgeX] Stored IDs: ${JSON.stringify(group.sourceIds)}`);
+          console.error(`[bridgeX] DOM sources: ${JSON.stringify(allDomSources.slice(0, 10).map(d => ({ id: d.id.substring(0, 12), name: d.name.substring(0, 50) })))}`);
+          console.error(`[bridgeX] API sources: ${JSON.stringify(apiSources.slice(0, 10).map(a => ({ id: a.id.substring(0, 12), title: a.title.substring(0, 50) })))}`);
+          console.error(`[bridgeX] sourceLookup size: ${sourceLookup.size}`);
+        }
+
+        // ── STEP 5: Toggle DOM checkboxes ──
+        const { toggled, matched } = focusGroupSources(targetDomIds);
+        
+        const expectedCount = targetDomIds.size > 0 ? targetDomIds.size : (group.sourceNames?.length || 0);
+        setGroupVerification(prev => ({
+          ...prev,
+          [group.id]: { checkedCount: matched, expectedCount }
+        }));
+
+        // ── STEP 6: Auto-migrate group to use proper IDs + full names ──
+        if (resolvedIds.length > 0) {
+          console.log(`[bridgeX] 🔄 Migrating group "${group.name}" → ${resolvedIds.length} IDs + full titles`);
+          updateSourceGroup(group.id, { sourceIds: resolvedIds, sourceNames: resolvedNames });
+        }
+
+        const active = getActiveSourceInfo();
+        setActiveDomSources(active);
+
+      } else {
+        console.log(`[bridgeX] 🎯 Clearing focus`);
+        unfocusAllSources();
+        setGroupVerification({});
+        await new Promise(r => setTimeout(r, 300));
+        const active = getActiveSourceInfo();
+        setActiveDomSources(active);
+      }
     } catch (err) {
-      console.error('Repair failed:', err);
-      alert('Repair failed. Check console.');
+      console.error('[bridgeX] Focus handler error:', err);
+      alert(`Focus failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
-      setIsRepairing(false);
+      setIsFocusing(false);
+    }
+  }, [isFocusing, setSelectedSourceGroupIds, updateSourceGroup, sourceGroups, location]);
+
+  const handleRepair = async () => {
+    const choice = prompt("Enter action:\n1 = Repair & Sync Data\n2 = Clear ALL Source Groups\n\nType 1 or 2:");
+    if (choice === '2') {
+      if (window.confirm(`⚠️ This will delete ALL ${sourceGroups?.length || 0} source groups. Are you sure?`)) {
+        setIsRepairing(true);
+        try {
+          await clearAllSourceGroups();
+          setFocusedGroupId(null);
+          setGroupVerification({});
+          alert('All source groups cleared!');
+        } catch (err) {
+          console.error('Clear failed:', err);
+          alert('Clear failed. Check console.');
+        } finally {
+          setIsRepairing(false);
+        }
+      }
+    } else if (choice === '1') {
+      setIsRepairing(true);
+      try {
+        await repairData();
+        alert('Data repair and sync complete!');
+      } catch (err) {
+        console.error('Repair failed:', err);
+        alert('Repair failed. Check console.');
+      } finally {
+        setIsRepairing(false);
+      }
     }
   };
 
@@ -194,13 +387,10 @@ const Sidebar: React.FC<SidebarProps> = ({ onOpenSmartImport, onOpenMerge, onOpe
           onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'; }}
           onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'transparent'; }}
         >
-          {/* Expand/Collapse Chevron */}
           <div style={{ width: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             {hasChildren ? (
               isOpen ? <ChevronDown size={14} color="var(--bridgex-text-secondary)" /> : <ChevronRight size={14} color="var(--bridgex-text-secondary)" />
-            ) : (
-              <div style={{ width: '14px' }} />
-            )}
+            ) : <div style={{ width: '14px' }} />}
           </div>
 
           <Layers size={16} color="var(--color-primary)" style={{ flexShrink: 0, opacity: 0.8 }} />
@@ -209,18 +399,15 @@ const Sidebar: React.FC<SidebarProps> = ({ onOpenSmartImport, onOpenMerge, onOpe
               {nb.name}
             </div>
             <div style={{ fontSize: '9px', color: 'var(--bridgex-text-secondary)', opacity: 0.6, marginTop: '2px' }}>
-              {nb.notebookLMId ? 'Linked' : 'Manual'} • {groups.length} groups
+              Linked • {groups.length} groups
             </div>
           </div>
 
-          {/* Actions */}
           <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
             {nb.notebookLMId && (
               <button
                 onClick={(e) => { e.stopPropagation(); window.open(`https://notebooklm.google.com/notebook/${nb.notebookLMId}`, '_blank'); }}
                 style={{ background: 'none', border: 'none', padding: '4px', borderRadius: '6px', cursor: 'pointer', color: 'var(--bridgex-text-secondary)', opacity: 0.5, display: 'flex', alignItems: 'center' }}
-                onMouseOver={e => { e.currentTarget.style.color = 'var(--color-primary)'; e.currentTarget.style.opacity = '1'; }}
-                onMouseOut={e => { e.currentTarget.style.color = 'var(--bridgex-text-secondary)'; e.currentTarget.style.opacity = '0.5'; }}
                 title="Open in NotebookLM"
               >
                 <ExternalLink size={12} />
@@ -229,221 +416,158 @@ const Sidebar: React.FC<SidebarProps> = ({ onOpenSmartImport, onOpenMerge, onOpe
             <button
               onClick={(e) => { e.stopPropagation(); if (window.confirm(`Delete notebook "${nb.name}"?`)) deleteNotebook(nb.id); }}
               style={{ background: 'none', border: 'none', padding: '4px', borderRadius: '6px', cursor: 'pointer', opacity: 0.4, display: 'flex', alignItems: 'center' }}
-              onMouseOver={e => { e.currentTarget.style.background = 'rgba(232, 113, 91, 0.1)'; e.currentTarget.style.opacity = '1'; }}
-              onMouseOut={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.opacity = '0.4'; }}
             >
               <X size={12} color="var(--bridgex-text-secondary)" />
             </button>
           </div>
         </div>
 
-        {/* Expanded: Groups + Studio Outputs */}
+        {/* Expanded Content */}
         {isOpen && (
           <div style={{ marginLeft: '16px', marginTop: '4px' }}>
-            {/* GROUP SOURCES Section */}
             <div style={{ marginBottom: '8px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 12px', marginBottom: '4px' }}>
                 <span style={{ fontSize: '9px', color: 'var(--bridgex-text-secondary)', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
                   Group Sources
                 </span>
                 <button
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
-                    const sourceNames: string[] = [];
-                    document.querySelectorAll('input[type="checkbox"]:checked, .mdc-checkbox--selected input').forEach(input => {
-                      const label = input.getAttribute('aria-label');
-                      if (label && !label.toLowerCase().includes('select all')) sourceNames.push(label.trim());
-                    });
-                    const name = prompt("Group name?");
-                    if (name) addSourceGroup(name, sourceNames, nb.notebookLMId || nb.id);
+                    const { names: domNames, ids: domIds } = getActiveSourceInfo();
+                    if (domNames.length === 0) { alert("Check some sources in NotebookLM first!"); return; }
+
+                    let finalNames = domNames, finalIds = domIds;
+                    try {
+                      const currentNotebookId = window.location.href.split('/notebook/')[1]?.split('?')[0]?.split('/')[0] || '';
+                      const apiSources = await fetchSourceListViaHook(currentNotebookId);
+                      if (apiSources.length > 0) {
+                        const resolvedNames: string[] = [], resolvedIds: string[] = [];
+                        domIds.forEach(did => {
+                          const as = apiSources.find(s => s.id === did);
+                          if (as) { resolvedNames.push(as.title); resolvedIds.push(as.id); }
+                        });
+                        if (resolvedNames.length > 0) { finalNames = resolvedNames; finalIds = resolvedIds; }
+                      }
+                    } catch (err) {}
+
+                    const nameInput = prompt(`Create group with ${finalNames.length} sources? Name:`);
+                    if (nameInput) addSourceGroup(nameInput, finalNames, nb.notebookLMId || nb.id, finalIds);
                   }}
-                  style={{ background: 'rgba(209, 161, 123, 0.1)', border: 'none', borderRadius: '6px', cursor: 'pointer', color: 'var(--color-primary)', padding: '2px 6px', display: 'flex', alignItems: 'center' }}
-                  title="Create Group"
+                  style={{ background: 'rgba(209, 161, 123, 0.1)', border: 'none', borderRadius: '6px', color: 'var(--color-primary)', padding: '2px 6px', cursor: 'pointer' }}
                 >
                   <Plus size={12} />
                 </button>
               </div>
 
-              {groups.length === 0 ? (
-                <div style={{
-                  padding: '12px 16px', margin: '0 12px',
-                  border: '1px dashed rgba(255, 255, 255, 0.08)', borderRadius: '10px',
-                  fontSize: '10px', color: 'var(--bridgex-text-secondary)', textAlign: 'center', opacity: 0.5
-                }}>
-                  No groups yet
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                  {groups.map(group => {
-                    const isGroupOpen = expandedGroups.has(group.id);
-                    return (
-                      <div key={group.id}>
-                        <div
-                          style={{
-                            display: 'flex', alignItems: 'center', padding: '8px 12px',
-                            borderRadius: '8px', cursor: 'grab',
-                            background: selectedSourceGroupIds.includes(group.id) ? 'rgba(209, 161, 123, 0.08)' : 'transparent',
-                            border: '1px solid ' + (selectedSourceGroupIds.includes(group.id) ? 'rgba(209, 161, 123, 0.25)' : 'transparent'),
-                            transition: 'all 0.2s', gap: '8px',
-                            opacity: draggedGroupId === group.id ? 0.5 : 1,
-                            userSelect: 'none'
-                          }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const wantToSelect = !selectedSourceGroupIds.includes(group.id);
-                            setSelectedSourceGroupIds(wantToSelect ? [group.id] : []);
-                            toggleGroup(group.id);
-                            
-                            // 1. Helper to find all elements including inside shadow roots
-                            const getAllElements = (selector: string, root: Document | Element | ShadowRoot = document): Element[] => {
-                              const elements = Array.from(root.querySelectorAll(selector));
-                              const shadows = Array.from(root.querySelectorAll('*')).map(el => el.shadowRoot).filter(Boolean) as ShadowRoot[];
-                              return elements.concat(shadows.flatMap(s => getAllElements(selector, s)));
-                            };
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                {groups.map(group => {
+                  const isGroupOpen = expandedGroups.has(group.id);
+                  const isFocused = focusedGroupId === group.id;
+                  let isGroupActiveDom = false;
+                  
+                  if (group.sourceIds && group.sourceIds.length > 0 && activeDomSources.ids.length > 0) {
+                    isGroupActiveDom = group.sourceIds.length === activeDomSources.ids.length && 
+                                       group.sourceIds.every(id => activeDomSources.ids.includes(id));
+                  } else if (!isGroupActiveDom && group.sourceNames?.length > 0 && activeDomSources.names.length > 0) {
+                    // Fuzzy name matching for legacy groups active state
+                    if (group.sourceNames.length === activeDomSources.names.length) {
+                      isGroupActiveDom = group.sourceNames.every(sn => {
+                        const snClean = cleanSourceName(sn);
+                        return activeDomSources.names.some(an => {
+                          const anClean = cleanSourceName(an);
+                          if (snClean === anClean) return true;
+                          if (snClean.length >= 7 && (anClean.startsWith(snClean) || snClean.startsWith(anClean))) return true;
+                          return false;
+                        });
+                      });
+                    }
+                  }
+                  
+                  const isActiveVisual = isGroupActiveDom || isFocused;
+                  const vState = groupVerification[group.id];
+                  const isVerified = vState && vState.checkedCount === vState.expectedCount && vState.expectedCount > 0;
+                  const hasPartialMatch = vState && vState.checkedCount > 0 && vState.checkedCount < vState.expectedCount;
 
-                            // 2. Identify the source list panel
-                            const sourcePanel = document.querySelector('.source-panel-content, .source-list-container, mat-selection-list, .artifact-panel-content');
-                            const options = sourcePanel 
-                              ? Array.from(sourcePanel.querySelectorAll('mat-list-option, .mdc-list-item[role="option"]'))
-                              : getAllElements('mat-list-option, [role="option"]').filter(el => !el.closest('.bridgex-sidebar, .bridgex-modal'));
-
-                            if (options.length === 0) {
-                              console.warn('[bridgeX] No source options found');
-                              return;
-                            }
-                            
-                            // ... rest of the content (title matching and clicking) ...
-                            const cleanNameStr = (text: string) => {
-                              return text
-                                .replace(/check_box_outline_blank|check_box|check|done|radio_button_unchecked|description|article|picture_as_pdf/gi, '')
-                                .replace(/\s+/g, ' ')
-                                .trim();
-                            };
-
-                            options.forEach(option => {
-                                const titleEl = option.querySelector('.source-title, .title, .name, .mdc-list-item__primary-text, .primary-text') || option;
-                                const text = cleanNameStr(titleEl.textContent || option.getAttribute('aria-label') || '');
-                                if (!text) return;
-
-                                const isGroupMember = group.sourceNames.some(sn => {
-                                  const s1 = sn.toLowerCase().trim();
-                                  const s2 = text.toLowerCase().trim();
-                                  // exact match or contained (for truncated titles)
-                                  return s1 === s2 || (s2.length > 3 && (s1.startsWith(s2) || s2.startsWith(s1)));
-                                });
-                                
-                                // Enhanced detection of selection state
-                                const isChecked = option.classList.contains('mat-mdc-list-option-selected') || 
-                                                option.classList.contains('mdc-list-item--selected') ||
-                                                option.getAttribute('aria-selected') === 'true' ||
-                                                option.getAttribute('aria-checked') === 'true';
-                                
-                                let targetState = isChecked;
-                                if (wantToSelect) {
-                                  targetState = isGroupMember;
-                                } else if (isGroupMember) {
-                                  targetState = false;
-                                }
-
-                                if (isChecked !== targetState) {
-                                   const cb = option.querySelector('.mdc-checkbox, input[type="checkbox"], .mdc-list-item__start') as HTMLElement;
-                                   if (cb) cb.click(); else (option as HTMLElement).click();
-                                }
-                            });
-                          }}
-                          draggable
-                          onDragStart={(e) => handleDragStart(e, group.id)}
-                          onDragOver={handleDragOver}
-                          onDrop={(e) => handleDrop(e, group.id, nb.notebookLMId || nb.id)}
-                          onMouseOver={(e) => { if (!selectedSourceGroupIds.includes(group.id)) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)'; }}
-                          onMouseOut={(e) => { if (!selectedSourceGroupIds.includes(group.id)) e.currentTarget.style.background = 'transparent'; }}
-                        >
-                          <div style={{ width: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                            {group.sourceNames?.length > 0 ? (
-                              isGroupOpen ? <ChevronDown size={12} color="var(--bridgex-text-secondary)" /> : <ChevronRight size={12} color="var(--bridgex-text-secondary)" />
-                            ) : <div style={{ width: '12px' }} />}
-                          </div>
-                          <CheckSquare size={14} color="var(--color-primary)" style={{ flexShrink: 0, opacity: 0.7 }} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--bridgex-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {group.name}
-                            </div>
-                          </div>
-                          <span style={{ fontSize: '9px', color: 'var(--bridgex-text-secondary)', opacity: 0.6, flexShrink: 0 }}>
-                            {group.sourceNames?.length || 0}
+                  return (
+                    <div key={group.id}>
+                      <div
+                        style={{
+                          display: 'flex', alignItems: 'center', padding: '8px 12px',
+                          borderRadius: '8px', cursor: 'pointer',
+                          background: isFocused ? 'rgba(209, 161, 123, 0.18)' : isActiveVisual ? 'rgba(209, 161, 123, 0.12)' : 'transparent',
+                          border: '1px solid ' + (isFocused ? 'rgba(209, 161, 123, 0.5)' : isActiveVisual ? 'rgba(209, 161, 123, 0.35)' : 'transparent'),
+                          transition: 'all 0.2s', gap: '8px'
+                        }}
+                        onClick={(e) => { e.stopPropagation(); handleFocusGroup(group, !isActiveVisual); }}
+                      >
+                        <div onClick={(e) => { e.stopPropagation(); toggleGroup(group.id); }} style={{ cursor: 'pointer' }}>
+                          {group.sourceNames?.length > 0 ? (isGroupOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : <div style={{ width: '14px' }} />}
+                        </div>
+                        <CheckSquare size={14} color={isActiveVisual ? "var(--color-primary)" : "var(--bridgex-text-secondary)"} style={{ opacity: isActiveVisual ? 1 : 0.4 }} />
+                        <div style={{ flex: 1, minWidth: 0, fontSize: '12px', fontWeight: 600, color: isActiveVisual ? 'var(--color-primary)' : 'var(--bridgex-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {group.name}
+                        </div>
+                        
+                        {vState && (
+                          <span style={{ fontSize: '9px', fontWeight: 800, padding: '2px 6px', borderRadius: '10px', background: isVerified ? 'rgba(76,175,80,0.1)' : 'rgba(255,152,0,0.1)', color: isVerified ? '#4caf50' : '#ff9800' }}>
+                            {vState.checkedCount}/{vState.expectedCount}
                           </span>
+                        )}
+
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <button onClick={(e) => { e.stopPropagation(); handleFocusGroup(group, !isFocused); }} style={{ background: 'none', border: 'none', padding: '2px', cursor: 'pointer', opacity: isFocused ? 1 : 0.4 }}>
+                            <Target size={12} color={isFocused ? 'var(--color-primary)' : 'var(--bridgex-text-secondary)'} />
+                          </button>
                           <button
-                            onClick={(e) => { e.stopPropagation(); if (confirm(`Delete group "${group.name}"?`)) deleteSourceGroup(group.id); }}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', opacity: 0.3 }}
-                            onMouseOver={e => e.currentTarget.style.opacity = '1'}
-                            onMouseOut={e => e.currentTarget.style.opacity = '0.3'}
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const { names: dNames, ids: dIds } = getActiveSourceInfo();
+                              if (dNames.length === 0) return alert('Check sources first!');
+                              if (confirm(`Re-sync "${group.name}" with full titles?`)) {
+                                let fNames = dNames, fIds = dIds;
+                                try {
+                                  const cNbId = window.location.href.split('/notebook/')[1]?.split('?')[0]?.split('/')[0] || '';
+                                  const apiS = await fetchSourceListViaHook(cNbId);
+                                  if (apiS.length > 0) {
+                                    const rNames: string[] = [], rIds: string[] = [];
+                                    dIds.forEach(id => { const s = apiS.find(x => x.id === id); if (s) { rNames.push(s.title); rIds.push(s.id); } });
+                                    if (rNames.length > 0) { fNames = rNames; fIds = rIds; }
+                                  }
+                                } catch (err) {}
+                                updateSourceGroup(group.id, { sourceNames: fNames, sourceIds: fIds });
+                              }
+                            }}
+                            style={{ background: 'none', border: 'none', padding: '2px', opacity: 0.4 }}
                           >
-                            <X size={10} color="var(--bridgex-text-secondary)" />
+                            <RefreshCw size={10} color={(!group.sourceIds || group.sourceIds.length === 0) ? '#ff9800' : 'inherit'} />
+                          </button>
+                          <button onClick={(e) => { e.stopPropagation(); deleteSourceGroup(group.id); }} style={{ background: 'none', border: 'none', padding: '2px', opacity: 0.4 }}>
+                            <X size={10} />
                           </button>
                         </div>
-
-                        {/* Expanded group sources */}
-                        {isGroupOpen && group.sourceNames?.length > 0 && (
-                          <div style={{ marginLeft: '24px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                            {group.sourceNames.map((sourceName, idx) => (
-                              <div key={idx} className="group-source-item" style={{
-                                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                                background: 'rgba(255, 255, 255, 0.02)', padding: '6px 10px',
-                                borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.04)',
-                                transition: 'all 0.2s'
-                              }}>
-                                <span style={{ fontSize: '11px', color: 'var(--bridgex-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, marginRight: '8px' }}>
-                                  {sourceName}
-                                </span>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                  <select
-                                    title="Transfer to group"
-                                    onChange={(e) => { const targetId = e.target.value; if (targetId) moveSourceBetweenGroups(sourceName, group.id, targetId); }}
-                                    style={{
-                                      background: 'rgba(0,0,0,0.2)', color: 'var(--bridgex-text-secondary)',
-                                      border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px',
-                                      fontSize: '9px', padding: '2px', cursor: 'pointer', outline: 'none', maxWidth: '60px'
-                                    }}
-                                  >
-                                    <option value="">Move...</option>
-                                    {sourceGroups.filter(sg => sg.id !== group.id && sg.notebookId === group.notebookId).map(sg => (
-                                      <option key={sg.id} value={sg.id}>{sg.name}</option>
-                                    ))}
-                                  </select>
-                                  <button
-                                    onClick={() => removeFromSourceGroup(group.id, sourceName)}
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', color: 'var(--bridgex-text-secondary)' }}
-                                    onMouseOver={e => e.currentTarget.style.color = '#e8715b'}
-                                    onMouseOut={e => e.currentTarget.style.color = 'var(--bridgex-text-secondary)'}
-                                  >
-                                    <X size={10} />
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
                       </div>
-                    );
-                  })}
-                </div>
-              )}
+
+                      {isGroupOpen && (
+                        <div style={{ marginLeft: '24px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          {(group.sourceNames || []).map((name, i) => (
+                            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 8px', background: 'rgba(255,255,255,0.02)', borderRadius: '4px' }}>
+                              <span style={{ fontSize: '10px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
+                              <button onClick={() => removeFromSourceGroup(group.id, name)} style={{ background: 'none', border: 'none', cursor: 'pointer', opacity: 0.4 }}><X size={8} /></button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
-            {/* STUDIO OUTPUTS Section */}
             <div style={{ marginBottom: '8px' }}>
               <div style={{ display: 'flex', alignItems: 'center', padding: '6px 12px', marginBottom: '4px' }}>
-                <span style={{ fontSize: '9px', color: 'var(--bridgex-text-secondary)', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
-                  Studio Outputs
-                </span>
+                <span style={{ fontSize: '9px', color: 'var(--bridgex-text-secondary)', fontWeight: 800, textTransform: 'uppercase' }}>Studio Outputs</span>
               </div>
-              <div style={{
-                padding: '14px 16px', margin: '0 12px',
-                border: '1px dashed rgba(209, 161, 123, 0.15)', borderRadius: '10px',
-                fontSize: '10px', color: 'var(--bridgex-text-secondary)', textAlign: 'center',
-                background: 'rgba(209, 161, 123, 0.02)', opacity: 0.5
-              }}>
-                <Sparkles size={14} style={{ margin: '0 auto 6px auto', display: 'block' }} color="var(--color-primary)" />
+              <div style={{ padding: '10px', border: '1px dashed rgba(209,161,123,0.1)', borderRadius: '8px', fontSize: '9px', textAlign: 'center', opacity: 0.5 }}>
                 Coming soon
               </div>
             </div>
@@ -508,6 +632,59 @@ const Sidebar: React.FC<SidebarProps> = ({ onOpenSmartImport, onOpenMerge, onOpe
           </div>
         </div>
       </div>
+
+      {/* Focus Mode Banner */}
+      {focusedGroupId && (() => {
+        const focusedGroup = sourceGroups.find(g => g.id === focusedGroupId);
+        if (!focusedGroup) return null;
+        const vState = groupVerification[focusedGroupId];
+        const isVerified = vState && vState.checkedCount === vState.expectedCount;
+        return (
+          <div style={{
+            margin: '0 12px', padding: '10px 14px',
+            background: 'linear-gradient(135deg, rgba(209, 161, 123, 0.12) 0%, rgba(209, 161, 123, 0.06) 100%)',
+            border: '1px solid rgba(209, 161, 123, 0.25)',
+            borderRadius: '10px',
+            display: 'flex', alignItems: 'center', gap: '10px',
+            animation: 'bridgex-fadeIn 0.3s ease-out'
+          }}>
+            <Target size={14} color="var(--color-primary)" style={{ flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                Focused: "{focusedGroup.name}"
+              </div>
+              <div style={{ fontSize: '9px', color: 'var(--bridgex-text-secondary)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                {isFocusing ? (
+                  <span>Applying focus...</span>
+                ) : isVerified ? (
+                  <><Check size={9} color="#4caf50" /> Chat & Studio scoped to {vState.checkedCount} sources</>
+                ) : vState ? (
+                  <><AlertTriangle size={9} color="#ff9800" /> {vState.checkedCount}/{vState.expectedCount} sources matched</>
+                ) : (
+                  <span>Scoped to {focusedGroup.sourceNames.length} sources</span>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                handleFocusGroup(focusedGroup, false);
+              }}
+              style={{ 
+                background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '6px', padding: '3px 8px', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: '4px',
+                fontSize: '9px', fontWeight: 700, color: 'var(--bridgex-text-secondary)',
+                textTransform: 'uppercase', letterSpacing: '0.05em'
+              }}
+              onMouseOver={e => { e.currentTarget.style.background = 'rgba(232, 113, 91, 0.15)'; e.currentTarget.style.color = '#e8715b'; }}
+              onMouseOut={e => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)'; e.currentTarget.style.color = 'var(--bridgex-text-secondary)'; }}
+              title="Clear focus and return to all sources"
+            >
+              <X size={10} /> Clear
+            </button>
+          </div>
+        );
+      })()}
 
       {/* Tree Content */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px 12px' }} className="custom-scrollbar">

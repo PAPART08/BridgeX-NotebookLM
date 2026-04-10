@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { X, Folder, Search, Check, ChevronRight, CheckCircle2, LayoutGrid, RefreshCw, AlertCircle, Cloud, MousePointer2 } from 'lucide-react';
+import { X, Folder, Search, Check, ChevronRight, CheckCircle2, LayoutGrid, RefreshCw, AlertCircle, Cloud, MousePointer2, CheckSquare } from 'lucide-react';
 import { useStorage } from '../../store';
 import { deepQuerySelectorAll } from '../../utils/dom';
 import { isContextValid } from '../../utils/context';
@@ -205,7 +205,7 @@ const BulkAssignNotebooksModal: React.FC<BulkAssignNotebooksModalProps> = ({ isO
               <LayoutGrid size={24} color="#000" strokeWidth={2.5} />
             </div>
             <div>
-              <h2 style={{ fontSize: '22px', margin: 0, color: textColor, fontWeight: 800, letterSpacing: '-0.02em' }}>Bulk Organization</h2>
+              <h2 style={{ fontSize: '22px', margin: 0, color: textColor, fontWeight: 800, letterSpacing: '-0.02em' }}>Organize Folders</h2>
               <p style={{ fontSize: '12px', color: subtextColor, margin: '2px 0 0 0', fontWeight: 500 }}>Seamlessly move notebooks into structural directories</p>
             </div>
           </div>
@@ -229,6 +229,28 @@ const BulkAssignNotebooksModal: React.FC<BulkAssignNotebooksModalProps> = ({ isO
                     </label>
                   </div>
                   <div style={{ display: 'flex', gap: '10px' }}>
+                    <button 
+                      disabled={nbSearch.trim() === ''}
+                      onClick={() => {
+                        const matchedIds = filteredNotebooks.map(nb => nb.id);
+                        setLocalSelection(prev => Array.from(new Set([...prev, ...matchedIds])));
+                      }} 
+                      style={{ 
+                        background: nbSearch.trim() === '' ? 'transparent' : 'rgba(209, 161, 123, 0.1)', 
+                        border: '1px solid ' + (nbSearch.trim() === '' ? 'var(--bridgex-border)' : 'rgba(209, 161, 123, 0.2)'),
+                        color: nbSearch.trim() === '' ? 'var(--bridgex-text-secondary)' : 'var(--color-primary)', 
+                        fontSize: '9px', fontWeight: 800, cursor: nbSearch.trim() === '' ? 'not-allowed' : 'pointer', 
+                        padding: '4px 10px', borderRadius: '6px', transition: 'all 0.2s',
+                        display: 'flex', alignItems: 'center', gap: '4px',
+                        opacity: nbSearch.trim() === '' ? 0.4 : 1
+                      }} 
+                      className="nb-item"
+                      onMouseOver={e => { if (nbSearch.trim() !== '') e.currentTarget.style.background = 'rgba(209, 161, 123, 0.2)'; }}
+                      onMouseOut={e => { if (nbSearch.trim() !== '') e.currentTarget.style.background = 'rgba(209, 161, 123, 0.1)'; }}
+                    >
+                      <CheckSquare size={10} />
+                      MATCHED
+                    </button>
                     <button onClick={() => setLocalSelection(notebooks.map(n => n.id))} style={{ background: surfaceBg, border: 'none', color: textColor, fontSize: '10px', fontWeight: 800, cursor: 'pointer', padding: '4px 10px', borderRadius: '6px' }} className="nb-item">ALL</button>
                     <button onClick={() => setLocalSelection([])} style={{ background: surfaceBg, border: 'none', color: subtextColor, fontSize: '10px', fontWeight: 800, cursor: 'pointer', padding: '4px 10px', borderRadius: '6px' }} className="nb-item">NONE</button>
                   </div>

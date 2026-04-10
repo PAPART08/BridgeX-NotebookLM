@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Folder, LayoutGrid, CheckCircle2, Search, FileText, Check, Plus, ChevronRight, Layers, ChevronDown } from 'lucide-react';
+import { X, Folder, LayoutGrid, CheckCircle2, Search, FileText, Check, Plus, ChevronRight, Layers, ChevronDown, CheckSquare } from 'lucide-react';
 import { useStorage } from '../../store';
 import { deepQuerySelectorAll } from '../../utils/dom';
 
@@ -182,7 +182,7 @@ const BulkAssignModal: React.FC<BulkAssignModalProps> = ({ isOpen, onClose }) =>
             </div>
             <div>
               <h2 style={{ fontSize: '18px', margin: 0, color: 'var(--bridgex-text-primary)', fontWeight: 700, fontFamily: "'Outfit', sans-serif" }}>
-                Bulk Assign Sources
+                Group Sources
               </h2>
               <p style={{ fontSize: '11px', margin: '2px 0 0 0', color: 'var(--bridgex-text-secondary)', opacity: 0.7 }}>
                 Assign to groups inside notebooks
@@ -204,9 +204,30 @@ const BulkAssignModal: React.FC<BulkAssignModalProps> = ({ isOpen, onClose }) =>
             <div style={{ padding: '20px 20px 14px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                 <p style={{ fontSize: '10px', color: 'var(--color-primary)', textTransform: 'uppercase', margin: 0, fontWeight: 800, letterSpacing: '0.08em' }}>
-                  Step 1: Select Sources ({selectedNames.length})
+                  Step 1: MATCHED_TEST Select Sources ({selectedNames.length})
                 </p>
-                <div style={{ display: 'flex', gap: '12px', flexShrink: 0 }}>
+                <div style={{ display: 'flex', gap: '10px', flexShrink: 0 }}>
+                  <button 
+                    disabled={search.trim() === ''}
+                    onClick={() => {
+                      const matchedNames = filteredSources.map(s => s.name);
+                      setSelectedNames(prev => Array.from(new Set([...prev, ...matchedNames])));
+                    }}
+                    style={{ 
+                      background: search.trim() === '' ? 'transparent' : 'rgba(209, 161, 123, 0.1)', 
+                      border: '1px solid ' + (search.trim() === '' ? 'var(--bridgex-border)' : 'rgba(209, 161, 123, 0.2)'),
+                      color: search.trim() === '' ? 'var(--bridgex-text-secondary)' : 'var(--color-primary)', 
+                      fontSize: '9px', fontWeight: 800, cursor: search.trim() === '' ? 'not-allowed' : 'pointer', 
+                      padding: '2px 8px', borderRadius: '6px', transition: 'all 0.2s',
+                      display: 'flex', alignItems: 'center', gap: '4px',
+                      opacity: search.trim() === '' ? 0.4 : 1
+                    }}
+                    onMouseOver={e => { if (search.trim() !== '') e.currentTarget.style.background = 'rgba(209, 161, 123, 0.2)'; }}
+                    onMouseOut={e => { if (search.trim() !== '') e.currentTarget.style.background = 'rgba(209, 161, 123, 0.1)'; }}
+                  >
+                    <CheckSquare size={10} />
+                    MATCHED
+                  </button>
                   <button onClick={() => setSelectedNames(sources.map(s => s.name))}
                     style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: '10px', fontWeight: 700, cursor: 'pointer', padding: 0 }}>
                     ALL

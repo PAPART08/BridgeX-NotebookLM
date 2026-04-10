@@ -211,7 +211,7 @@ export async function addSourceToNotebook(notebookId: string, title: string, con
   const res = await fetch(`${BATCH_EXECUTE_URL}?${params.toString()}`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+      "X-Same-Domain": "1"
     },
     body: body,
     credentials: "include"
@@ -263,7 +263,7 @@ export async function fetchNotebookSources(notebookId: string) {
   const res = await fetch(`${BATCH_EXECUTE_URL}?${params.toString()}`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+      "X-Same-Domain": "1"
     },
     body: body,
     credentials: "include"
@@ -313,7 +313,6 @@ export async function uploadFileToNotebook(file: File, notebookId: string): Prom
   const preRegRes = await fetch(`${BATCH_EXECUTE_URL}?${params.toString()}`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
       "X-Same-Domain": "1",
     },
     body: body.toString(),
@@ -463,7 +462,7 @@ export async function fetchSourceDocument(notebookId: string, sourceId: string):
   const res = await fetch(`${BATCH_EXECUTE_URL}?${params.toString()}`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+      "X-Same-Domain": "1"
     },
     body: body,
     credentials: "include"
@@ -572,7 +571,7 @@ export async function deleteNotebookSources(notebookId: string, sourceIds: strin
     const res = await fetch(`${BATCH_EXECUTE_URL}?${params.toString()}`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+        "X-Same-Domain": "1"
       },
       body: body,
       credentials: "include"
@@ -619,7 +618,7 @@ export async function listNotebooks(sourcePath: string = "/", authuserOverride?:
   });  console.log(`[bridgeX] Native Sync (authuser: ${authuser})...`);
   const res = await fetch(`${BATCH_EXECUTE_URL}?${params.toString()}`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+    headers: { "X-Same-Domain": "1" },
     body: body,
     credentials: "include"
   });

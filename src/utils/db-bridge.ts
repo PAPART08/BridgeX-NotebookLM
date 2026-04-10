@@ -1,11 +1,6 @@
 import { isContextValid, isContextInvalidatedError } from './context';
 
-export const dbRequest = (type: string, payload?: any): Promise<any> => {
-  // If context is completely gone, don't even try - and don't log a scary error
-  if (!isContextValid()) {
-    return Promise.resolve(null);
-  }
-
+const performRequest = (type: string, payload?: any): Promise<any> => {
   return new Promise((resolve, reject) => {
     try {
       chrome.runtime.sendMessage(
@@ -18,7 +13,6 @@ export const dbRequest = (type: string, payload?: any): Promise<any> => {
               return resolve(null);
             }
             const errorMsg = lastErr.message || `Chrome runtime error during ${type}`;
-            console.error(`[bridgeX] Runtime error during ${type}:`, errorMsg);
             return reject(new Error(errorMsg));
           }
           
@@ -28,22 +22,38 @@ export const dbRequest = (type: string, payload?: any): Promise<any> => {
           }
 
           if (messageResponse.error) {
-            const errorMsg = messageResponse.error || `Worker failure during ${type}`;
-            console.error(`[bridgeX] Worker error during ${type}:`, errorMsg);
-            return reject(new Error(errorMsg));
+            return reject(new Error(messageResponse.error));
           }
           
-          // Unwrap the response field from the worker
           resolve(messageResponse.response);
         }
       );
     } catch (err: any) {
-      if (isContextInvalidatedError(err)) {
-        resolve(null);
-      } else {
-        console.error(`[bridgeX] Send error during ${type}:`, err.message);
-        reject(new Error(err.message || `Send error during ${type}`));
-      }
+      if (isContextInvalidatedError(err)) resolve(null);
+      else reject(new Error(err.message || `Send error during ${type}`));
     }
   });
+};
+
+export const dbRequest = async (type: string, payload?: any, retries = 2): Promise<any> => {
+  if (!isContextValid()) return null;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await performRequest(type, payload);
+    } catch (err: any) {
+      const isPortClosed = err.message?.includes('message port closed') || 
+                           err.message?.includes('Could not establish connection');
+      
+      if (isPortClosed && attempt < retries) {
+        console.warn(`[bridgeX] Port closed during ${type}, retrying (attempt ${attempt + 1}/${retries})...`);
+        // Small delay to allow Service Worker / Offscreen to breathe
+        await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
+        continue;
+      }
+      
+      console.error(`[bridgeX] ${type} failed after ${attempt + 1} attempts:`, err.message);
+      throw err;
+    }
+  }
 };
