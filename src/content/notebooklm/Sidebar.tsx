@@ -5,13 +5,13 @@ import { PromptLibrary } from '../../components/PromptLibrary';
 import { deepQuerySelectorAll, cleanSourceName, getActiveSourceInfo, getAllDomSourceInfo, focusGroupSources, unfocusAllSources, verifySourceState, isSourceGroupMember, fetchSourceListViaHook } from '../../utils/dom';
 
 interface SidebarProps {
-  onOpenSmartImport: () => void;
-  onOpenMerge: () => void;
+  onOpenPowerImport: () => void;
+  onOpenCombine: () => void;
   onOpenCreateFolder: () => void;
   onOpenBulkAssignNotebooks: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ onOpenSmartImport, onOpenMerge, onOpenCreateFolder, onOpenBulkAssignNotebooks }) => {
+const Sidebar: React.FC<SidebarProps> = ({ onOpenPowerImport, onOpenCombine, onOpenCreateFolder, onOpenBulkAssignNotebooks }) => {
   const { 
     folders, notebooks, inbox, sourceGroups, addFolder, deleteFolder, addNotebook, deleteNotebook, addSourceGroup, deleteSourceGroup, clearAllSourceGroups, bridgeNote,
     selectedSourceGroupIds, setSelectedSourceGroupIds,

@@ -204,7 +204,7 @@ const BulkAssignModal: React.FC<BulkAssignModalProps> = ({ isOpen, onClose }) =>
             <div style={{ padding: '20px 20px 14px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                 <p style={{ fontSize: '10px', color: 'var(--color-primary)', textTransform: 'uppercase', margin: 0, fontWeight: 800, letterSpacing: '0.08em' }}>
-                  Step 1: MATCHED_TEST Select Sources ({selectedNames.length})
+                  Step 1: Select Sources ({selectedNames.length})
                 </p>
                 <div style={{ display: 'flex', gap: '10px', flexShrink: 0 }}>
                   <button 

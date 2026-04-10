@@ -13,15 +13,15 @@ import { deepQuerySelectorAll } from '../../utils/dom';
 
 
 const SourcesHeaderButtons: React.FC<{ 
-  onSmartImport: () => void, 
-  onMerge: () => void,
-  onBulkAssign: () => void,
-  onBulkDelete: () => void
-}> = ({ onSmartImport, onMerge, onBulkAssign, onBulkDelete }) => {
+  onPowerImport: () => void, 
+  onCombine: () => void,
+  onGroupAssign: () => void,
+  onBatchClear: () => void
+}> = ({ onPowerImport, onCombine, onGroupAssign, onBatchClear }) => {
   return (
     <div style={{ display: 'flex', width: '100%', flexWrap: 'wrap', justifyContent: 'center', gap: '10px', marginTop: '8px', marginBottom: '8px', alignItems: 'center' }}>
       <button 
-        onClick={(e) => { e.stopPropagation(); onSmartImport(); }}
+        onClick={(e) => { e.stopPropagation(); onPowerImport(); }}
         style={{
           padding: '8px 16px', borderRadius: '20px', border: '1px solid var(--bridgex-border)',
           backgroundColor: 'var(--bridgex-surface)', color: 'var(--bridgex-text-primary)', fontSize: '12px', fontWeight: 700,
@@ -36,7 +36,7 @@ const SourcesHeaderButtons: React.FC<{
         Power Import
       </button>
       <button 
-        onClick={(e) => { e.stopPropagation(); onMerge(); }}
+        onClick={(e) => { e.stopPropagation(); onCombine(); }}
         style={{
           padding: '8px 16px', borderRadius: '20px', border: '1px solid var(--bridgex-border)',
           backgroundColor: 'var(--bridgex-surface)', color: 'var(--bridgex-text-primary)', fontSize: '12px', fontWeight: 700,
@@ -51,7 +51,7 @@ const SourcesHeaderButtons: React.FC<{
         Combine
       </button>
       <button 
-        onClick={(e) => { e.stopPropagation(); onBulkAssign(); }}
+        onClick={(e) => { e.stopPropagation(); onGroupAssign(); }}
         style={{
           padding: '8px 16px', borderRadius: '20px', border: '1px solid var(--bridgex-border)',
           backgroundColor: 'var(--bridgex-surface)', color: 'var(--bridgex-text-primary)', fontSize: '12px', fontWeight: 700,
@@ -66,7 +66,7 @@ const SourcesHeaderButtons: React.FC<{
         Group Sources
       </button>
       <button 
-        onClick={(e) => { e.stopPropagation(); onBulkDelete(); }}
+        onClick={(e) => { e.stopPropagation(); onBatchClear(); }}
         style={{
           padding: '8px 16px', borderRadius: '20px', border: '1px solid var(--bridgex-border)',
           backgroundColor: 'var(--bridgex-surface)', color: 'var(--bridgex-text-primary)', fontSize: '12px', fontWeight: 700,
@@ -585,19 +585,19 @@ const DashboardFilterBar: React.FC<{
 };
 
 export interface InjectorsProps {
-  onSmartImport: () => void;
-  onMerge: () => void;
-  onBulkAssign: () => void;
-  onBulkDelete: () => void;
+  onPowerImport: () => void;
+  onCombine: () => void;
+  onGroupAssign: () => void;
+  onBatchClear: () => void;
   onOpenCreateFolder: () => void;
   onOpenBulkAssignNotebooks: () => void;
 }
 
 export const Injectors: React.FC<InjectorsProps> = ({ 
-  onSmartImport, 
-  onMerge, 
-  onBulkAssign, 
-  onBulkDelete, 
+  onPowerImport, 
+  onCombine, 
+  onGroupAssign, 
+  onBatchClear, 
   onOpenCreateFolder,
   onOpenBulkAssignNotebooks
 }) => {
@@ -966,7 +966,7 @@ export const Injectors: React.FC<InjectorsProps> = ({
          headerTargetRef.current
       )}
 
-      {sourcesHeaderTargetRef.current && createPortal(<SourcesHeaderButtons onSmartImport={onSmartImport} onMerge={onMerge} onBulkAssign={onBulkAssign} onBulkDelete={onBulkDelete} />, sourcesHeaderTargetRef.current)}
+      {sourcesHeaderTargetRef.current && createPortal(<SourcesHeaderButtons onPowerImport={onPowerImport} onCombine={onCombine} onGroupAssign={onGroupAssign} onBatchClear={onBatchClear} />, sourcesHeaderTargetRef.current)}
       {sourceListTargetRef.current && createPortal(<SourceSearchBox />, sourceListTargetRef.current)}
       
       {cardTargetsRef.current.map((card, i) => {

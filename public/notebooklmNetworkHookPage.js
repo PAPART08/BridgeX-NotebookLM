@@ -58,9 +58,9 @@
     return { atToken, blToken, fSid };
   }
 
-  // --- Manual RPC Trigger via XHR ---
-  // Using XMLHttpRequest for manual triggers is often more resilient to page-level fetch hooks or CSP quirks.
-  function triggerRPCViaXHR(rpcid, innerPayload, rpcParams, onResponse, onError) {
+  // --- Manual RPC Trigger via Fetch ---
+  // Using native Fetch is often more resilient to CSP quirks than XHR in modern browsers.
+  function triggerRPCViaFetch(rpcid, innerPayload, rpcParams, onResponse, onError) {
     try {
       const payload = [[[rpcid, innerPayload, null, "generic"]]];
       const fReq = JSON.stringify(payload);
@@ -78,33 +78,38 @@
       params.append('_reqid', String(Math.floor(Math.random() * 1000000)));
       params.append('rt', 'c');
 
-      // Use strictly relative URL for same-origin stability
-      const url = '/_/LabsTailwindUi/data/batchexecute?' + params.toString();
-      const body = 'f.req=' + encodeURIComponent(fReq) + '&at=' + encodeURIComponent(tokens.atToken);
+      // Use fully qualified URL to avoid any ambiguity in the main world
+      const url = window.location.origin + '/_/LabsTailwindUi/data/batchexecute?' + params.toString();
+      
+      const body = new URLSearchParams();
+      body.append('f.req', fReq);
+      body.append('at', tokens.atToken);
 
-      console.log(`[bridgeX] Sending manual ${rpcid} RPC via XHR...`);
+      console.log(`[bridgeX] Sending manual ${rpcid} RPC via Fetch...`);
 
-      const xhr = new originalXHR();
-      xhr.open('POST', url, true);
-      xhr.setRequestHeader('X-Same-Domain', '1');
-      xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded;charset=UTF-8');
-      xhr.withCredentials = true;
-
-      xhr.onload = function() {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          onResponse(xhr.responseText);
+      originalFetch(url, {
+        method: 'POST',
+        headers: {
+          'X-Same-Domain': '1',
+          'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
+        },
+        body: body.toString(),
+        credentials: 'include'
+      })
+      .then(async (res) => {
+        if (res.ok) {
+          const text = await res.text();
+          onResponse(text);
         } else {
-          onError('RPC failed with status: ' + xhr.status);
+          onError('RPC failed with status: ' + res.status);
         }
-      };
-
-      xhr.onerror = function() {
-        onError('XHR Network Error');
-      };
-
-      xhr.send(body);
+      })
+      .catch((err) => {
+        console.error(`[bridgeX] Fetch: ${rpcid} failed:`, err);
+        onError('Network Error: ' + (err.message || String(err)));
+      });
     } catch (err) {
-      console.error('[bridgeX] XHR triggering error:', err);
+      console.error('[bridgeX] Fetch triggering error:', err);
       onError(String(err));
     }
   }
@@ -117,14 +122,14 @@
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.has('authuser')) rpcParams.authuser = urlParams.get('authuser');
 
-    triggerRPCViaXHR('wXbhsf', innerPayload, rpcParams, 
+    triggerRPCViaFetch('wXbhsf', innerPayload, rpcParams, 
       (text) => {
         const notebooks = parseWXbhsfResponse(text, 'wXbhsf');
-        console.log('[bridgeX] XHR: wXbhsf returned ' + notebooks.length + ' notebooks');
+        console.log('[bridgeX] Fetch: wXbhsf returned ' + notebooks.length + ' notebooks');
         window.postMessage({ type: 'BRIDGEX_NOTEBOOK_LIST', notebooks }, '*');
       },
       (err) => {
-        console.error('[bridgeX] XHR: wXbhsf RPC failed:', err);
+        console.error('[bridgeX] Fetch: wXbhsf RPC failed:', err);
         window.postMessage({ type: 'BRIDGEX_NOTEBOOK_LIST', notebooks: [], error: err }, '*');
       }
     );
@@ -140,14 +145,14 @@
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.has('authuser')) rpcParams.authuser = urlParams.get('authuser');
 
-    triggerRPCViaXHR('rLM1Ne', innerPayload, rpcParams,
+    triggerRPCViaFetch('rLM1Ne', innerPayload, rpcParams,
       (text) => {
         const sources = parseRLM1NeResponse(text, 'rLM1Ne', notebookId);
-        console.log('[bridgeX] XHR: rLM1Ne returned ' + sources.length + ' sources');
+        console.log('[bridgeX] Fetch: rLM1Ne returned ' + sources.length + ' sources');
         window.postMessage({ type: 'BRIDGEX_SOURCE_LIST', sources: sources, notebookId: notebookId }, '*');
       },
       (err) => {
-        console.error('[bridgeX] XHR: rLM1Ne RPC failed:', err);
+        console.error('[bridgeX] Fetch: rLM1Ne RPC failed:', err);
         window.postMessage({ type: 'BRIDGEX_SOURCE_LIST', sources: [], error: err }, '*');
       }
     );

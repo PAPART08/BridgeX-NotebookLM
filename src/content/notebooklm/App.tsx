@@ -12,10 +12,10 @@ import Sidebar from './Sidebar';
 
 const App: React.FC = () => {
   const { syncWithNotebookLM } = useStorage();
-  const [isSmartImportOpen, setIsSmartImportOpen] = useState(false);
-  const [isMergeOpen, setIsMergeOpen] = useState(false);
-  const [isBulkAssignOpen, setIsBulkAssignOpen] = useState(false);
-  const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
+  const [isPowerImportOpen, setIsPowerImportOpen] = useState(false);
+  const [isCombineOpen, setIsCombineOpen] = useState(false);
+  const [isGroupAssignOpen, setIsGroupAssignOpen] = useState(false);
+  const [isBatchClearOpen, setIsBatchClearOpen] = useState(false);
   const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
   const [isBulkAssignNotebooksOpen, setIsBulkAssignNotebooksOpen] = useState(false);
   const [, setPortalTick] = useState(0);
@@ -34,10 +34,10 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [syncWithNotebookLM]);
 
-  const onOpenSmartImport = React.useCallback(() => setIsSmartImportOpen(true), []);
-  const onOpenMerge = React.useCallback(() => setIsMergeOpen(true), []);
-  const onOpenBulkAssign = React.useCallback(() => setIsBulkAssignOpen(true), []);
-  const onOpenBulkDelete = React.useCallback(() => setIsBulkDeleteOpen(true), []);
+  const onOpenPowerImport = React.useCallback(() => setIsPowerImportOpen(true), []);
+  const onOpenCombine = React.useCallback(() => setIsCombineOpen(true), []);
+  const onOpenGroupAssign = React.useCallback(() => setIsGroupAssignOpen(true), []);
+  const onOpenBatchClear = React.useCallback(() => setIsBatchClearOpen(true), []);
   const onOpenCreateFolder = React.useCallback(() => setIsCreateFolderOpen(true), []);
   const onOpenBulkAssignNotebooks = React.useCallback(() => setIsBulkAssignNotebooksOpen(true), []);
 
@@ -49,17 +49,17 @@ const App: React.FC = () => {
   return (
     <>
       <Sidebar 
-        onOpenSmartImport={onOpenSmartImport}
-        onOpenMerge={onOpenMerge}
+        onOpenPowerImport={onOpenPowerImport}
+        onOpenCombine={onOpenCombine}
         onOpenCreateFolder={onOpenCreateFolder}
         onOpenBulkAssignNotebooks={onOpenBulkAssignNotebooks}
       />
       
       <Injectors 
-        onSmartImport={onOpenSmartImport}
-        onMerge={onOpenMerge}
-        onBulkAssign={onOpenBulkAssign}
-        onBulkDelete={onOpenBulkDelete}
+        onPowerImport={onOpenPowerImport}
+        onCombine={onOpenCombine}
+        onGroupAssign={onOpenGroupAssign}
+        onBatchClear={onOpenBatchClear}
         onOpenCreateFolder={onOpenCreateFolder}
         onOpenBulkAssignNotebooks={onOpenBulkAssignNotebooks}
       />
@@ -75,20 +75,20 @@ const App: React.FC = () => {
             onClose={() => setIsBulkAssignNotebooksOpen(false)} 
           />
           <SmartImportModal 
-            isOpen={isSmartImportOpen} 
-            onClose={() => setIsSmartImportOpen(false)} 
+            isOpen={isPowerImportOpen} 
+            onClose={() => setIsPowerImportOpen(false)} 
           />
           <MergeModal 
-            isOpen={isMergeOpen} 
-            onClose={() => setIsMergeOpen(false)} 
+            isOpen={isCombineOpen} 
+            onClose={() => setIsCombineOpen(false)} 
           />
           <BulkAssignModal 
-            isOpen={isBulkAssignOpen} 
-            onClose={() => setIsBulkAssignOpen(false)} 
+            isOpen={isGroupAssignOpen} 
+            onClose={() => setIsGroupAssignOpen(false)} 
           />
           <BulkDeleteModal 
-            isOpen={isBulkDeleteOpen} 
-            onClose={() => setIsBulkDeleteOpen(false)} 
+            isOpen={isBatchClearOpen} 
+            onClose={() => setIsBatchClearOpen(false)} 
           />
         </>,
         portalTarget

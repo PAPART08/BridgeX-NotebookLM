@@ -215,7 +215,7 @@ const BulkDeleteModal: React.FC<BulkDeleteModalProps> = ({ isOpen, onClose }) =>
             <div style={{ background: 'rgba(239, 68, 68, 0.1)', padding: '8px', borderRadius: '10px' }}>
               <Trash2 size={20} color="#EF4444" />
             </div>
-            <h2 style={{ fontSize: '18px', margin: 0, color: 'var(--bridgex-text-primary)', fontWeight: 600, fontFamily: "'Outfit', sans-serif" }}>Batch Clear Sources</h2>
+            <h2 style={{ fontSize: '18px', margin: 0, color: 'var(--bridgex-text-primary)', fontWeight: 700, fontFamily: "'Outfit', sans-serif", letterSpacing: '-0.01em' }}>Batch Clear Sources</h2>
           </div>
           <button 
             disabled={isDeleting}
@@ -315,6 +315,13 @@ const BulkDeleteModal: React.FC<BulkDeleteModalProps> = ({ isOpen, onClose }) =>
                             textOverflow: 'ellipsis',
                             minWidth: 0
                           }}>{s.name}</span>
+                          {s.isSelectedInSidebar && (
+                            <span style={{
+                              flexShrink: 0, fontSize: '8px', background: 'rgba(129, 201, 149, 0.12)',
+                              color: '#81C995', padding: '2px 5px', borderRadius: '4px', fontWeight: 800,
+                              border: '1px solid rgba(129, 201, 149, 0.2)'
+                            }}>ACTIVE</span>
+                          )}
                           {isDuplicate && (
                             <span style={{
                               fontSize: '9px', fontWeight: 800, color: 'white',

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { X, Search, GitMerge, AlertCircle, FileText, Check, Loader2, Play, Trash2, CheckCircle2 } from 'lucide-react';
 import { useStorage } from '../../store';
 import { countWords, formatWordCount } from '../../utils/textAnalysis';
-import { uploadFileToNotebook, deleteNotebookSources, fetchSourceDocument } from '../../utils/notebooklm-api';
+import { addSourceToNotebook, deleteNotebookSources, fetchSourceDocument } from '../../utils/notebooklm-api';
 
 interface Source {
   id: string;
@@ -155,7 +155,11 @@ const MergeModal: React.FC<MergeModalProps> = ({ isOpen, onClose }) => {
 
         const text = await fetchSourceDocument(notebookId, sourceData.id);
         
-        combinedText += `\n\n# Source: ${name}\n\n${text}\n\n---\n`;
+        combinedText += `SOURCE: ${name}\n`;
+        combinedText += `================================================================================\n\n`;
+        combinedText += `${text}\n\n`;
+        combinedText += `--------------------------------------------------------------------------------\n\n`;
+        
         setCapturedContent(combinedText);
         setTotalWordCount(countWords(combinedText));
       }
@@ -169,28 +173,27 @@ const MergeModal: React.FC<MergeModalProps> = ({ isOpen, onClose }) => {
       }
 
       setProcessingStep('uploading');
-      const blob = new Blob([combinedText], { type: 'text/markdown' });
       
       // Generate default filename concatenating selected names
-      let defaultFileName = 'Merged';
-      if (selectedNames.length <= 4) {
-         defaultFileName = selectedNames.slice(0, 4).map(n => n.replace(/[^a-z0-9]/gi, '_').substring(0, 20)).join(' + ');
-         defaultFileName = `Merged - ${defaultFileName}.md`;
+      let defaultFileName = 'Combined Document';
+      if (selectedNames.length <= 3) {
+         defaultFileName = `Combined: ` + selectedNames.map(n => n.substring(0, 20)).join(' + ');
       } else {
-         const safeFirstSource = selectedNames[0].replace(/[^a-z0-9]/gi, '_').substring(0, 30);
-         defaultFileName = `Merged - ${safeFirstSource} + ${selectedNames.length - 1} others.md`;
+         defaultFileName = `Combined: ${selectedNames[0].substring(0, 30)} + ${selectedNames.length - 1} others`;
       }
       
-      const finalFileName = customName ? (customName.toLowerCase().endsWith('.md') ? customName : `${customName}.md`) : defaultFileName;
+      let finalFileName = customName || defaultFileName;
       
-      const file = new File([blob], finalFileName, { type: 'text/markdown' });
+      // Strip common file extensions if user typed them, as this is a Text Source title
+      finalFileName = finalFileName.replace(/\.(md|txt|pdf|epub|docx)$/i, '');
       
       if (notebookId) {
-        await uploadFileToNotebook(file, notebookId);
+        // Step 3: Re-Insertion using izAoDd (addSourceToNotebook)
+        await addSourceToNotebook(notebookId, finalFileName, combinedText);
         
-        // Post-upload delay: Give the backend time to index the new file before we delete the sources
-        console.log("[bridgeX] Upload complete. Waiting for backend to settle...");
-        await new Promise(r => setTimeout(r, 3500));
+        // Post-upload delay: Give the backend time to index the new text source before we delete the originals
+        console.log("[bridgeX] Text source added. Waiting for backend sync...");
+        await new Promise(r => setTimeout(r, 2500));
       }
 
       if (deleteOriginals) {
@@ -253,7 +256,7 @@ const MergeModal: React.FC<MergeModalProps> = ({ isOpen, onClose }) => {
             <div style={{ background: 'rgba(209, 161, 123, 0.1)', padding: '8px', borderRadius: '10px' }}>
               <GitMerge size={20} color="var(--color-primary)" />
             </div>
-            <h2 style={{ fontSize: '18px', margin: 0, color: 'var(--bridgex-text-primary)', fontWeight: 600, fontFamily: "'Outfit', sans-serif" }}>Combine & Sync Sources</h2>
+            <h2 style={{ fontSize: '18px', margin: 0, color: 'var(--bridgex-text-primary)', fontWeight: 700, fontFamily: "'Outfit', sans-serif" }}>Combine & Sync Sources</h2>
           </div>
           <button 
             disabled={isProcessing}
@@ -345,6 +348,13 @@ const MergeModal: React.FC<MergeModalProps> = ({ isOpen, onClose }) => {
                         textOverflow: 'ellipsis',
                         minWidth: 0
                       }}>{s.name}</span>
+                      {s.isSelectedInSidebar && (
+                        <span style={{ 
+                          flexShrink: 0, fontSize: '8px', background: 'rgba(129, 201, 149, 0.12)', 
+                          color: '#81C995', padding: '2px 5px', borderRadius: '4px', 
+                          fontWeight: 800, border: '1px solid rgba(129, 201, 149, 0.2)' 
+                        }}>ACTIVE</span>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -445,6 +455,21 @@ const MergeModal: React.FC<MergeModalProps> = ({ isOpen, onClose }) => {
                       <b>Merge Status</b>: Selected sources will be combined into a single file. {deleteOriginals ? "Originals will be deleted." : "Originals will be kept."}
                     </p>
                   </div>
+
+                  {/* Word Count Warning */}
+                  {selectedNames.length > 5 && (
+                    <div style={{ 
+                      padding: '12px', borderRadius: '12px', 
+                      backgroundColor: 'rgba(255, 152, 0, 0.05)',
+                      border: '1px solid rgba(255, 152, 0, 0.2)',
+                      display: 'flex', gap: '10px', alignItems: 'center'
+                    }}>
+                      <AlertCircle size={16} color="#FF9800" />
+                      <p style={{ fontSize: '11px', color: '#B26A00', margin: 0 }}>
+                        Merging many sources? If the total exceeds <b>500,000 words</b>, NotebookLM may reject the upload (400 Error).
+                      </p>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', paddingTop: '20px' }}>
@@ -481,10 +506,18 @@ const MergeModal: React.FC<MergeModalProps> = ({ isOpen, onClose }) => {
                   {totalWordCount > 0 && (
                     <div style={{ 
                       padding: '16px', borderRadius: '12px', backgroundColor: 'var(--bridgex-bg-main)',
-                      border: '1px solid var(--bridgex-border)', textAlign: 'center'
+                      border: '1px solid ' + (totalWordCount > 450000 ? '#EF4444' : totalWordCount > 300000 ? '#F59E0B' : 'var(--bridgex-border)'), 
+                      textAlign: 'center'
                     }}>
                        <p style={{ fontSize: '10px', color: 'var(--bridgex-text-secondary)', textTransform: 'uppercase', fontWeight: 800, margin: '0 0 4px 0' }}>Estimated Result Size</p>
-                       <p style={{ fontSize: '20px', fontWeight: 800, color: 'var(--color-primary)', margin: 0 }}>{formatWordCount(totalWordCount)}</p>
+                       <p style={{ 
+                         fontSize: '20px', fontWeight: 800, 
+                         color: totalWordCount > 450000 ? '#EF4444' : totalWordCount > 300000 ? '#F59E0B' : 'var(--color-primary)', 
+                         margin: 0 
+                       }}>{formatWordCount(totalWordCount)}</p>
+                       {totalWordCount > 400000 && (
+                         <p style={{ fontSize: '10px', color: '#EF4444', marginTop: '4px', fontWeight: 600 }}>Approaching NotebookLM word limit (500k)</p>
+                       )}
                     </div>
                   )}
 
